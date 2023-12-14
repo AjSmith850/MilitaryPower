@@ -1,0 +1,201 @@
+---
+title: "Manpower Impact on Needed Equipment"
+author: "Anthony J Smith"
+format: html
+---
+
+```{r message=FALSE}
+options(warn = -1)
+
+suppressMessages(library(tidyverse))
+suppressMessages(library(tidymodels))
+suppressMessages(library(patchwork))
+suppressMessages(library(ggridges))
+suppressMessages(library(scales))
+suppressMessages(library(kableExtra))
+suppressMessages(library(parsnip))
+suppressMessages(library(ggplot2))
+suppressMessages(library(corrplot))
+suppressMessages(library(dplyr))
+suppressMessages(library(fmsb))
+
+
+``` 
+```{r message=FALSE}
+data <- read_csv("global_firepower_2022.csv")
+names(data) <- janitor::make_clean_names(names(data))
+```
+## Satement of Purpose
+
+The following analysis delves into a comprehensive data set encompassing  `r data %>% nrow()` countries and their access to various military resources. The data set contains `r data %>% nrow()`rows and `r data %>% ncol()` Columns which will provide insight into the relationship between a nations available manpower and need for supporting transportation.These resources include tanks, aircraft carriers, attack helicopters, navy ships, and patrol vessels. By examining this information, this report aims to shed light on the importance of strategically purchasing equipment based on available manpower.  
+
+## Introduction
+
+The year is 2125, and the nation of Tamriel has manifested out of thin air and is requesting independence and recognition by other nations of the world. In order to gain independence, it must be able to defend itself from the colonization of neighboring nations already on Earth. A special intelligence team from Tamriel's Intelligence Security Agency (TISA) has stolen lintel from the nations of the world regarding their access to military related resource and in some cases, daunting levels of manpower. To protect its people and pull them out of the dark ages, the nation of Tamriel must use this information to strategically budget for resources and establish a bar for an equipment to manpower ratio.
+
+
+We begin our analysis by sorting the data collected by TISA for countries with the greatest access to manpower. These countries are our greatest threat due to their daunting accessing to manpower. The top ten highest countries are shown below.
+
+```{r}
+sorted_df <- data %>%
+  arrange(desc(available_manpower))
+
+top_ten <- head(sorted_df, n = 10)
+
+top_ten %>%
+   kable() %>%
+   kable_styling(bootstrap_options = c("hover", "striped"))
+```
+```{r}
+ggplot(top_ten, aes(x = reorder(country, -available_manpower), y = available_manpower)) +
+  geom_segment(aes(xend = reorder(country, -available_manpower), y = 0, yend = available_manpower), 
+               color = "grey", lwd = 1.5) +
+  geom_point(color = "blue", size = 3) +
+  coord_flip() +
+  labs(x = "Country", y = "Total Population", 
+       title = "Top Ten Countries by Available Manpower") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::label_number())
+
+```
+
+```{r}
+china_data <- sorted_df %>%
+  filter(country == "China") %>%
+  select(aircraft_carriers, armored_vehicles, attack_helicopters, destroyers, fighters_interceptors, frigates, helicopters, helicopter_carriers, patrol_vessels)
+
+china_long <- china_data %>%
+  pivot_longer(cols = c(aircraft_carriers, armored_vehicles, attack_helicopters, destroyers, 
+                        fighters_interceptors, frigates, helicopters, helicopter_carriers, 
+                        patrol_vessels),
+               names_to = "military_asset", values_to = "count")
+
+china_plot <- ggplot(china_long, aes(x = military_asset, y = count, fill = military_asset)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Military Assets of China", x = "Military Asset", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none") +
+  coord_flip()
+
+print(china_plot)
+```
+
+
+```{r}
+mexico_data <- sorted_df %>%
+  filter(country == "Mexico") %>%
+  select(aircraft_carriers, armored_vehicles, attack_helicopters, destroyers, fighters_interceptors, frigates, helicopters, helicopter_carriers, patrol_vessels)
+
+mexico_long <- mexico_data %>%
+  pivot_longer(cols = c(aircraft_carriers, armored_vehicles, attack_helicopters, destroyers, 
+                        fighters_interceptors, frigates, helicopters, helicopter_carriers, 
+                        patrol_vessels),
+               names_to = "military_asset", values_to = "count")
+
+mexico_plot <- ggplot(mexico_long, aes(x = military_asset, y = count, fill = military_asset)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Military Assets of Mexico", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none") +
+  coord_flip()
+```
+
+
+## Model Construction and Interpretation
+
+Now that we've completed an exploration of the data, we'll now proceed with constructing a model. Again, the point of these models is to point out the importance of manpower and it impact on the need for equipment. Doing this will inform the leaders of Tamriel what resources will be needed to adequately support their men.
+
+```{r}
+set.seed(1234)
+
+data_split <- initial_split(sorted_df, prop = 0.85)
+
+train <- training(data_split)
+
+test <- testing(data_split)
+
+train_folds <- vfold_cv(train, v = 10)
+```
+
+# Regression Model
+```{r}
+reg_spec <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+
+grid_depth <- tibble("tree_depth" = c(2, 3, 4, 5, 8, 10, 12, 15, 20))
+
+reg_rec <- recipe(available_manpower ~ aircraft_carriers + armored_vehicles + attack_helicopters + destroyers + fighters_interceptors + frigates + helicopters + helicopter_carriers + patrol_vessels, data = train) %>%
+  step_impute_median(all_numeric_predictors()) %>% 
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+reg_wf <- workflow() %>%
+  add_model(reg_spec) %>% 
+  add_recipe(reg_rec)
+
+
+reg_fit <- fit(reg_wf, data = train)
+
+reg_results <- reg_fit %>%
+  predict(new_data = test) %>%
+  bind_cols(test) %>%
+  metrics(truth = available_manpower, estimate = .pred)
+
+
+reg_results %>%
+    kable() %>%
+    kable_styling(bootstrap_options = c("hover", "striped"))
+```
+
+Reviewing the regression model we can that our RMSE value tells us that this
+
+```{r}
+reg_fit %>%
+  extract_fit_engine() %>%
+  tidy() %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("hover", "striped"))
+```
+
+
+# Random Forest model
+```{r}
+reg_rec <- recipe(available_manpower ~ ., data = train) %>%
+  step_rm(purchasing_power_parity) %>%
+  step_other(all_nominal_predictors(), -all_outcomes(), threshold = 0.05) %>%
+  step_novel(all_nominal_predictors(), -all_outcomes()) %>%
+  step_impute_median(all_numeric_predictors(), -all_outcomes()) %>%
+  step_impute_mode(all_nominal_predictors(), -all_outcomes()) %>%
+  step_dummy(all_nominal_predictors(), -all_outcomes())
+
+rf_spec <- rand_forest(mode = "regression") %>%
+  set_engine("randomForest")
+
+rf_workflow <- workflow() %>%
+  add_recipe(reg_rec) %>%
+  add_model(rf_spec)
+
+rf_fit <- fit(rf_workflow, data = train)
+
+rf_results <- rf_fit %>%
+  predict(new_data = test) %>%
+  bind_cols(test) %>%
+  metrics(truth = available_manpower, estimate = .pred)
+
+rf_results %>%
+   kable() %>%
+   kable_styling(bootstrap_options = c("hover", "striped"))
+
+
+```
+
+## Sources
+
+R Charts. (2023). ggplot2 package. https://r-charts.com/ggplot2/
+
+CNN. (2022). Russia's war on Ukraine, one year on. CNN. https://www.cnn.com/interactive/2023/02/europe/russia-ukraine-war-timeline/index.html
+
+Garamone, J. (December,2022). Biden signs national defense authorization act into law. US Department of Defense. https://www.defense.gov/News/News-Stories/Article/Article/3252968/biden-signs-national-defense-authorization-act-into-law/ 
